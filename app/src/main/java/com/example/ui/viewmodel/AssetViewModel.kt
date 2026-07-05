@@ -252,6 +252,16 @@ class AssetViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun normalizeArabic(text: String): String {
+        return text.trim()
+            .lowercase()
+            .replace("أ", "ا")
+            .replace("إ", "ا")
+            .replace("آ", "ا")
+            .replace("ة", "ه")
+            .replace("\\s+".toRegex(), " ")
+    }
+
     // Helper to parse CSV fields respecting quotes and custom delimiters
     private fun parseCsvLine(line: String, delimiter: String): List<String> {
         val result = mutableListOf<String>()
@@ -261,9 +271,15 @@ class AssetViewModel(application: Application) : AndroidViewModel(application) {
         while (i < line.length) {
             val c = line[i]
             if (c == '"') {
-                inQuotes = !inQuotes
+                if (inQuotes && i + 1 < line.length && line[i + 1] == '"') {
+                    // Escaped double quote "" inside quotes
+                    currentField.append('"')
+                    i++
+                } else {
+                    inQuotes = !inQuotes
+                }
             } else if (line.startsWith(delimiter, i) && !inQuotes) {
-                result.add(currentField.toString().trim().removeSurrounding("\""))
+                result.add(currentField.toString().trim())
                 currentField.clear()
                 i += delimiter.length - 1
             } else {
@@ -271,7 +287,7 @@ class AssetViewModel(application: Application) : AndroidViewModel(application) {
             }
             i++
         }
-        result.add(currentField.toString().trim().removeSurrounding("\""))
+        result.add(currentField.toString().trim())
         return result
     }
 
@@ -297,29 +313,34 @@ class AssetViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 // Get header and columns
-                val header = parseCsvLine(firstLine, delimiter).map { it.trim().lowercase() }
+                val cleanHeader = parseCsvLine(firstLine, delimiter).map { 
+                    it.trim()
+                        .lowercase()
+                        .removePrefix("\uFEFF")
+                        .removePrefix("\uFFFE")
+                }
                 
                 var importedCount = 0
                 val departmentsList = repository.allDepartments.first()
                 val defaultDept = departmentsList.firstOrNull()
                 val defaultDeptId = defaultDept?.id ?: 1
                 
-                // Map to store department name (trimmed lowercase) to its ID for avoiding duplicates
+                // Map to store normalized department name to its ID to absolutely avoid duplicates
                 val departmentsMap = departmentsList.associate { 
-                    it.name.trim().lowercase() to it.id 
+                    normalizeArabic(it.name) to it.id 
                 }.toMutableMap()
 
                 // Prosperous headers lists for Arabic and English
                 val nameNames = listOf("الاسم", "اسم الجهاز", "اسم الاصل", "اسم الأصل", "البيان", "الأصل", "الاصل", "name", "device name", "asset name", "device", "asset", "item", "title")
                 val idNames = listOf("كود تعريفي", "رقم الأصل", "الرقم التعريفي", "كود الأصل", "كود الاصل", "الباركود", "المعرف", "رقم الاصل", "الكود", "id", "asset id", "code", "asset code", "device id", "barcode", "serial", "inventory id")
-                val serialNames = listOf("الرقم التسلسلي", "رقم التسلسل", "الرقم السري", "سريال", "رقم السريال", "serialnumber", "serial number", "s/n", "sn", "serial no", "serial no.")
+                val serialNames = listOf("الرقم التسلسلي", "رقم التسلسل", "الرقم السري", "سريال", "رقم السريال", "serialnumber", "serial number", "s/n", "sn", "serial no", "serial no.", "الرقم التسلسلي", "serial_number")
                 val typeNames = listOf("النوع", "التصنيف", "الفئة", "type", "category", "class")
                 val descriptionNames = listOf("الوصف", "ملاحظات", "تفاصيل", "description", "notes", "details", "desc", "comment", "comments")
                 val conditionNames = listOf("الجودة", "الحالة", "حالة الأصل", "حالة الاصل", "حالة", "condition", "status", "state")
-                val modelNames = listOf("الموديل", "طراز", "رقم الموديل", "النوعية", "model", "type no", "model number")
+                val modelNames = listOf("الموديل", "طراز", "رقم الموديل", "النوعية", "model", "type no", "model number", "موديل", "device model")
                 val quantityNames = listOf("الكمية", "العدد", "الكميه", "quantity", "qty", "count")
                 val accessoriesNames = listOf("الملحقات", "التوابع", "المرفقات", "الملحقه", "accessories", "attachments")
-                val manufacturerNames = listOf("الشركة المصنعة", "الشركة", "المصنع", "البراند", "الماركة", "ماركة", "manufacturer", "brand", "make", "company")
+                val manufacturerNames = listOf("الشركة المصنعة", "الشركة", "المصنع", "البراند", "الماركة", "ماركة", "manufacturer", "brand", "make", "company", "manufactur")
                 val deptNames = listOf("القسم", "الإدارة", "الادارة", "الجهة", "الموقع", "department", "dept", "section", "room", "location")
                 
                 for (i in 1 until lines.size) {
@@ -332,7 +353,7 @@ class AssetViewModel(application: Application) : AndroidViewModel(application) {
                     
                     // Map indices dynamically based on header list
                     fun getValueForHeader(names: List<String>): String {
-                        val index = header.indexOfFirst { headerName -> 
+                        val index = cleanHeader.indexOfFirst { headerName -> 
                             names.any { prospective -> prospective.lowercase().trim() == headerName }
                         }
                         return if (index != -1 && index < tokens.size) tokens[index] else ""
@@ -356,16 +377,16 @@ class AssetViewModel(application: Application) : AndroidViewModel(application) {
                     val deptName = getValueForHeader(deptNames).trim()
                     var deptId = defaultDeptId
                     if (deptName.isNotBlank()) {
-                        val deptKey = deptName.lowercase()
-                        if (departmentsMap.containsKey(deptKey)) {
-                            deptId = departmentsMap[deptKey]!!
+                        val normalizedDept = normalizeArabic(deptName)
+                        if (departmentsMap.containsKey(normalizedDept)) {
+                            deptId = departmentsMap[normalizedDept]!!
                         } else {
                             // Create department dynamically
                             val newDeptId = repository.insertDepartment(
-                                Department(name = deptName, code = deptName.take(3).uppercase(), description = "تم إنشاؤه تلقائياً")
+                                Department(name = deptName, code = deptName.take(3).uppercase().trim(), description = "تم إنشاؤه تلقائياً")
                             )
                             deptId = newDeptId.toInt()
-                            departmentsMap[deptKey] = deptId
+                            departmentsMap[normalizedDept] = deptId
                         }
                     }
                     
@@ -395,26 +416,30 @@ class AssetViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // Excel-compatible CSV Exporter
+    // Excel-compatible CSV Exporter from the entire database
     fun exportAssetsToCsv(): String {
         val builder = StringBuilder()
-        // CSV Header
-        builder.append("الاسم,كود تعريفي,الشركة المصنعة,الموديل,الرقم التسلسلي,النوع,التصنيف,الملحقات,الوصف,التكلفة,الكمية,الجودة,القسم\n")
+        // Standard UTF-8 BOM to make Excel open Arabic characters correctly
+        builder.append("\uFEFF")
         
-        val assets = filteredAssets.value
+        // CSV Header
+        builder.append("الاسم,كود تعريفي,الشركة المصنعة,الموديل,الرقم التسلسلي,النوع,الملحقات,الوصف,الكمية,الجودة,القسم\n")
+        
+        val assets = assetsWithDetails.value // Read ALL assets from database, not just filtered ones
         val depts = departments.value.associateBy { it.id }
         for (item in assets) {
-            val name = item.asset.name.replace(",", " ")
-            val code = item.asset.id.replace(",", " ")
-            val mfg = item.asset.manufacturer.replace(",", " ")
-            val model = item.asset.model.replace(",", " ")
-            val serial = item.asset.serialNumber.replace(",", " ")
-            val type = item.asset.type
-            val acc = item.asset.accessories.replace(",", " ")
-            val description = item.asset.description.replace(",", " ")
+            val name = item.asset.name.replace("\"", "\"\"")
+            val code = item.asset.id.replace("\"", "\"\"")
+            val mfg = item.asset.manufacturer.replace("\"", "\"\"")
+            val model = item.asset.model.replace("\"", "\"\"")
+            val serial = item.asset.serialNumber.replace("\"", "\"\"")
+            val type = item.asset.type.replace("\"", "\"\"")
+            val acc = item.asset.accessories.replace("\"", "\"\"")
+            val description = item.asset.description.replace("\"", "\"\"")
             val quantity = item.asset.quantity
-            val condition = item.asset.condition
-            val deptName = depts[item.asset.currentDepartmentId]?.name ?: "غير محدد"
+            val condition = item.asset.condition.replace("\"", "\"\"")
+            val deptName = (depts[item.asset.currentDepartmentId]?.name ?: "غير محدد").replace("\"", "\"\"")
+            
             builder.append("\"$name\",\"$code\",\"$mfg\",\"$model\",\"$serial\",\"$type\",\"$acc\",\"$description\",$quantity,\"$condition\",\"$deptName\"\n")
         }
         return builder.toString()
@@ -423,9 +448,10 @@ class AssetViewModel(application: Application) : AndroidViewModel(application) {
     // CSV Empty Template for Excel
     fun getCsvTemplate(): String {
         val builder = StringBuilder()
-        builder.append("الاسم,كود تعريفي,الشركة المصنعة,الموديل,الرقم التسلسلي,النوع,التصنيف,الملحقات,الوصف,التكلفة,الكمية,الجودة,القسم\n")
-        builder.append("\"طاولة مكتبية ذكية\",\"AST-1001\",\"IKEA\",\"IKEA-Desk-X\",\"SN-99238\",\"MOVABLE\",\"أثاث مكتب\",\"\",\"طاولة مكتبية قابلة لتعديل الارتفاع\",1250,5,\"NEW\",\"الموارد البشرية\"\n")
-        builder.append("\"شاشة حاسوب 27 بوصة\",\"AST-1002\",\"LG\",\"LG-27UL\",\"SN-88231\",\"MOVABLE\",\"أجهزة إلكترونية\",\"كابل طاقة - كابل HDMI\",\"شاشة عرض بدقة 4K فائقة الوضوح\",1500,10,\"EXCELLENT\",\"تقنية المعلومات\"\n")
+        builder.append("\uFEFF")
+        builder.append("الاسم,كود تعريفي,الشركة المصنعة,الموديل,الرقم التسلسلي,النوع,الملحقات,الوصف,الكمية,الجودة,القسم\n")
+        builder.append("\"طاولة مكتبية ذكية\",\"AST-1001\",\"IKEA\",\"IKEA-Desk-X\",\"SN-99238\",\"MOVABLE\",\"\",\"طاولة مكتبية قابلة لتعديل الارتفاع\",5,\"NEW\",\"الموارد البشرية\"\n")
+        builder.append("\"شاشة حاسوب 27 بوصة\",\"AST-1002\",\"LG\",\"LG-27UL\",\"SN-88231\",\"MOVABLE\",\"كابل طاقة - كابل HDMI\",\"شاشة عرض بدقة 4K فائقة الوضوح\",10,\"EXCELLENT\",\"تقنية المعلومات\"\n")
         return builder.toString()
     }
 

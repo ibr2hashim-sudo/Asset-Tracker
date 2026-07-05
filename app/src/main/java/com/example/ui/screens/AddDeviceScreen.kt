@@ -29,6 +29,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.example.data.model.Department
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -84,6 +86,15 @@ fun AddDeviceScreen(
         bitmap?.let {
             capturedBitmap = it
             selectedImageUri = null // مسح الاستوديو في حال التقاط كاميرا
+        }
+    }
+
+    // لاقط الرقم التسلسلي والباركود بالكاميرا
+    val barcodeLauncher = rememberLauncherForActivityResult(
+        contract = ScanContract()
+    ) { result ->
+        if (result.contents != null) {
+            serialNumber = result.contents
         }
     }
 
@@ -287,7 +298,25 @@ fun AddDeviceScreen(
                     placeholder = { Text("مثال: SN-9012384") },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
-                    shape = RoundedCornerShape(12.dp)
+                    shape = RoundedCornerShape(12.dp),
+                    trailingIcon = {
+                        IconButton(onClick = {
+                            val scanOptions = ScanOptions().apply {
+                                setDesiredBarcodeFormats(ScanOptions.ALL_CODE_TYPES)
+                                setPrompt("وجه الكاميرا نحو الرمز الشريطي (Barcode) أو الرقم التسلسلي للالتقاط")
+                                setBeepEnabled(true)
+                                setOrientationLocked(false)
+                                setBarcodeImageEnabled(true)
+                            }
+                            barcodeLauncher.launch(scanOptions)
+                        }) {
+                            Icon(
+                                imageVector = Icons.Default.QrCodeScanner,
+                                contentDescription = "مسح الرمز الشريطي بالكاميرا",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
                 )
             }
 

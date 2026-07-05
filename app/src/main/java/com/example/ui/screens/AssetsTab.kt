@@ -36,10 +36,19 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import coil.compose.AsyncImage
+import android.graphics.Bitmap
+import android.net.Uri
+import androidx.activity.result.launch
+import kotlinx.coroutines.launch
+import androidx.compose.ui.graphics.asImageBitmap
+import com.example.data.local.LocalImageStorageService
+import androidx.compose.foundation.Image
 import com.example.data.model.Asset
 import com.example.data.model.AssetWithDetails
 import com.example.data.model.Department
 import com.example.data.model.TransferWithDetails
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
 import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -992,11 +1001,39 @@ fun AddAssetDialog(
     var serialError by remember { mutableStateOf(false) }
     var deptError by remember { mutableStateOf(false) }
 
-    val imagePickerLauncher = rememberLauncherForActivityResult(
+    val context = LocalContext.current
+    val storageService = remember { LocalImageStorageService(context) }
+    val coroutineScope = rememberCoroutineScope()
+
+    var selectedImageUri by remember { mutableStateOf<Uri?>(null) }
+    var capturedBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var showImagePickerDialog by remember { mutableStateOf(false) }
+
+    val galleryLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri ->
         uri?.let {
-            imageUri = it.toString()
+            selectedImageUri = it
+            capturedBitmap = null
+            imageUri = null
+        }
+    }
+
+    val cameraLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicturePreview()
+    ) { bitmap ->
+        bitmap?.let {
+            capturedBitmap = it
+            selectedImageUri = null
+            imageUri = null
+        }
+    }
+
+    val barcodeLauncher = rememberLauncherForActivityResult(
+        contract = ScanContract()
+    ) { result ->
+        if (result.contents != null) {
+            serialNumber = result.contents
         }
     }
 
@@ -1090,12 +1127,28 @@ fun AddAssetDialog(
                         value = serialNumber,
                         onValueChange = {
                             serialNumber = it
-                            serialError = it.isBlank()
                         },
-                        label = { Text("الرقم التسلسلي (SN) *") },
-                        isError = serialError,
+                        label = { Text("الرقم التسلسلي (SN)") },
                         modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
+                        singleLine = true,
+                        trailingIcon = {
+                            IconButton(onClick = {
+                                val scanOptions = ScanOptions().apply {
+                                    setDesiredBarcodeFormats(ScanOptions.ALL_CODE_TYPES)
+                                    setPrompt("وجه الكاميرا نحو الرمز الشريطي (Barcode) أو الرقم التسلسلي للالتقاط")
+                                    setBeepEnabled(true)
+                                    setOrientationLocked(false)
+                                    setBarcodeImageEnabled(true)
+                                }
+                                barcodeLauncher.launch(scanOptions)
+                            }) {
+                                Icon(
+                                    imageVector = Icons.Default.QrCodeScanner,
+                                    contentDescription = "مسح الرمز الشريطي بالكاميرا",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
                     )
                 }
 
@@ -1120,7 +1173,27 @@ fun AddAssetDialog(
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            if (!imageUri.isNullOrBlank()) {
+                            if (capturedBitmap != null) {
+                                Image(
+                                    bitmap = capturedBitmap!!.asImageBitmap(),
+                                    contentDescription = "Asset image preview",
+                                    modifier = Modifier
+                                        .size(64.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f), RoundedCornerShape(8.dp)),
+                                    contentScale = ContentScale.Crop
+                                )
+                            } else if (selectedImageUri != null) {
+                                AsyncImage(
+                                    model = selectedImageUri,
+                                    contentDescription = "Asset image preview",
+                                    modifier = Modifier
+                                        .size(64.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f), RoundedCornerShape(8.dp)),
+                                    contentScale = ContentScale.Crop
+                                )
+                            } else if (!imageUri.isNullOrBlank()) {
                                 AsyncImage(
                                     model = imageUri,
                                     contentDescription = "Asset image preview",
@@ -1143,7 +1216,7 @@ fun AddAssetDialog(
                             }
 
                             Button(
-                                onClick = { imagePickerLauncher.launch("image/*") },
+                                onClick = { showImagePickerDialog = true },
                                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondaryContainer, contentColor = MaterialTheme.colorScheme.onSecondaryContainer)
                             ) {
                                 Icon(Icons.Default.PhotoCamera, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -1151,8 +1224,12 @@ fun AddAssetDialog(
                                 Text("تحميل صورة")
                             }
 
-                            if (!imageUri.isNullOrBlank()) {
-                                TextButton(onClick = { imageUri = null }) {
+                            if (capturedBitmap != null || selectedImageUri != null || !imageUri.isNullOrBlank()) {
+                                TextButton(onClick = {
+                                    capturedBitmap = null
+                                    selectedImageUri = null
+                                    imageUri = null
+                                }) {
                                     Text("إزالة", color = MaterialTheme.colorScheme.error)
                                 }
                             }
@@ -1313,11 +1390,19 @@ fun AddAssetDialog(
                             onClick = {
                                 val qty = quantityStr.toIntOrNull() ?: 1
                                 if (name.isBlank()) nameError = true
-                                if (serialNumber.isBlank()) serialError = true
                                 if (selectedDeptId == null) deptError = true
 
-                                if (name.isNotBlank() && serialNumber.isNotBlank() && selectedDeptId != null) {
-                                    onSave(name, serialNumber, selectedType, description, selectedDeptId!!, selectedCondition, model, qty, imageUri, assetCode, accessories, manufacturer)
+                                if (name.isNotBlank() && selectedDeptId != null) {
+                                    val assetIdToSave = assetCode.trim().ifBlank { "AST-${System.currentTimeMillis() % 10000}" }
+                                    coroutineScope.launch {
+                                        var finalImageUri: String? = imageUri
+                                        if (capturedBitmap != null) {
+                                            finalImageUri = storageService.saveBitmapLocally(capturedBitmap!!, assetIdToSave)
+                                        } else if (selectedImageUri != null) {
+                                            finalImageUri = storageService.saveImageLocally(selectedImageUri!!, assetIdToSave)
+                                        }
+                                        onSave(name, serialNumber, selectedType, description, selectedDeptId!!, selectedCondition, model, qty, finalImageUri, assetIdToSave, accessories, manufacturer)
+                                    }
                                 }
                             },
                             modifier = Modifier
@@ -1330,6 +1415,38 @@ fun AddAssetDialog(
                 }
             }
         }
+    }
+
+    if (showImagePickerDialog) {
+        AlertDialog(
+            onDismissRequest = { showImagePickerDialog = false },
+            title = { Text("إضافة صورة للأصل", fontWeight = FontWeight.Bold) },
+            text = { Text("اختر طريقة التقاط أو رفع صورة الأصل لحفظها محلياً في ذاكرة الهاتف:") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        cameraLauncher.launch(null)
+                        showImagePickerDialog = false
+                    }
+                ) {
+                    Icon(Icons.Default.PhotoCamera, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("الكاميرا")
+                }
+            },
+            dismissButton = {
+                FilledTonalButton(
+                    onClick = {
+                        galleryLauncher.launch("image/*")
+                        showImagePickerDialog = false
+                    }
+                ) {
+                    Icon(Icons.Default.PhotoLibrary, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("الاستوديو")
+                }
+            }
+        )
     }
 }
 
@@ -1356,11 +1473,39 @@ fun EditAssetDialog(
     var manufacturer by remember { mutableStateOf(assetDetails.asset.manufacturer) }
     var accessories by remember { mutableStateOf(assetDetails.asset.accessories) }
 
-    val imagePickerLauncher = rememberLauncherForActivityResult(
+    val context = LocalContext.current
+    val storageService = remember { LocalImageStorageService(context) }
+    val coroutineScope = rememberCoroutineScope()
+
+    var selectedImageUri by remember { mutableStateOf<Uri?>(null) }
+    var capturedBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var showImagePickerDialog by remember { mutableStateOf(false) }
+
+    val galleryLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri ->
         uri?.let {
-            imageUri = it.toString()
+            selectedImageUri = it
+            capturedBitmap = null
+            imageUri = null
+        }
+    }
+
+    val cameraLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicturePreview()
+    ) { bitmap ->
+        bitmap?.let {
+            capturedBitmap = it
+            selectedImageUri = null
+            imageUri = null
+        }
+    }
+
+    val barcodeLauncher = rememberLauncherForActivityResult(
+        contract = ScanContract()
+    ) { result ->
+        if (result.contents != null) {
+            serialNumber = result.contents
         }
     }
 
@@ -1437,9 +1582,27 @@ fun EditAssetDialog(
                     OutlinedTextField(
                         value = serialNumber,
                         onValueChange = { serialNumber = it },
-                        label = { Text("الرقم التسلسلي (SN) *") },
+                        label = { Text("الرقم التسلسلي (SN)") },
                         modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
+                        singleLine = true,
+                        trailingIcon = {
+                            IconButton(onClick = {
+                                val scanOptions = ScanOptions().apply {
+                                    setDesiredBarcodeFormats(ScanOptions.ALL_CODE_TYPES)
+                                    setPrompt("وجه الكاميرا نحو الرمز الشريطي (Barcode) أو الرقم التسلسلي للالتقاط")
+                                    setBeepEnabled(true)
+                                    setOrientationLocked(false)
+                                    setBarcodeImageEnabled(true)
+                                }
+                                barcodeLauncher.launch(scanOptions)
+                            }) {
+                                Icon(
+                                    imageVector = Icons.Default.QrCodeScanner,
+                                    contentDescription = "مسح الرمز الشريطي بالكاميرا",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
                     )
                 }
 
@@ -1464,7 +1627,27 @@ fun EditAssetDialog(
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            if (!imageUri.isNullOrBlank()) {
+                            if (capturedBitmap != null) {
+                                Image(
+                                    bitmap = capturedBitmap!!.asImageBitmap(),
+                                    contentDescription = "Asset image preview",
+                                    modifier = Modifier
+                                        .size(64.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f), RoundedCornerShape(8.dp)),
+                                    contentScale = ContentScale.Crop
+                                )
+                            } else if (selectedImageUri != null) {
+                                AsyncImage(
+                                    model = selectedImageUri,
+                                    contentDescription = "Asset image preview",
+                                    modifier = Modifier
+                                        .size(64.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f), RoundedCornerShape(8.dp)),
+                                    contentScale = ContentScale.Crop
+                                )
+                            } else if (!imageUri.isNullOrBlank()) {
                                 AsyncImage(
                                     model = imageUri,
                                     contentDescription = "Asset image preview",
@@ -1487,7 +1670,7 @@ fun EditAssetDialog(
                             }
 
                             Button(
-                                onClick = { imagePickerLauncher.launch("image/*") },
+                                onClick = { showImagePickerDialog = true },
                                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondaryContainer, contentColor = MaterialTheme.colorScheme.onSecondaryContainer)
                             ) {
                                 Icon(Icons.Default.PhotoCamera, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -1495,8 +1678,12 @@ fun EditAssetDialog(
                                 Text("تغيير الصورة")
                             }
 
-                            if (!imageUri.isNullOrBlank()) {
-                                TextButton(onClick = { imageUri = null }) {
+                            if (capturedBitmap != null || selectedImageUri != null || !imageUri.isNullOrBlank()) {
+                                TextButton(onClick = {
+                                    capturedBitmap = null
+                                    selectedImageUri = null
+                                    imageUri = null
+                                }) {
                                     Text("إزالة", color = MaterialTheme.colorScheme.error)
                                 }
                             }
@@ -1685,23 +1872,33 @@ fun EditAssetDialog(
                         }
                         Button(
                             onClick = {
-                                if (name.isNotBlank() && serialNumber.isNotBlank()) {
-                                    val updated = assetDetails.asset.copy(
-                                        name = name,
-                                        serialNumber = serialNumber,
-                                        type = selectedType,
-                                        description = description,
-                                        currentDepartmentId = selectedDeptId,
-                                        condition = selectedCondition,
-                                        status = selectedStatus,
-                                        model = model,
-                                        quantity = quantityStr.toIntOrNull() ?: 1,
-                                        imageUri = imageUri,
-                                        id = assetCode,
-                                        manufacturer = manufacturer,
-                                        accessories = accessories
-                                    )
-                                    onSave(updated)
+                                if (name.isNotBlank()) {
+                                    val assetIdToSave = assetCode.trim().ifBlank { assetDetails.asset.id }
+                                    coroutineScope.launch {
+                                        var finalImageUri: String? = imageUri
+                                        if (capturedBitmap != null) {
+                                            finalImageUri = storageService.saveBitmapLocally(capturedBitmap!!, assetIdToSave)
+                                        } else if (selectedImageUri != null) {
+                                            finalImageUri = storageService.saveImageLocally(selectedImageUri!!, assetIdToSave)
+                                        }
+
+                                        val updated = assetDetails.asset.copy(
+                                            name = name,
+                                            serialNumber = serialNumber,
+                                            type = selectedType,
+                                            description = description,
+                                            currentDepartmentId = selectedDeptId,
+                                            condition = selectedCondition,
+                                            status = selectedStatus,
+                                            model = model,
+                                            quantity = quantityStr.toIntOrNull() ?: 1,
+                                            imageUri = finalImageUri,
+                                            id = assetIdToSave,
+                                            manufacturer = manufacturer,
+                                            accessories = accessories
+                                        )
+                                        onSave(updated)
+                                    }
                                 }
                             },
                             modifier = Modifier.weight(1.5f)
@@ -1712,6 +1909,38 @@ fun EditAssetDialog(
                 }
             }
         }
+    }
+
+    if (showImagePickerDialog) {
+        AlertDialog(
+            onDismissRequest = { showImagePickerDialog = false },
+            title = { Text("تحديث صورة الأصل", fontWeight = FontWeight.Bold) },
+            text = { Text("اختر طريقة التقاط أو رفع صورة الأصل لحفظها محلياً في ذاكرة الهاتف:") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        cameraLauncher.launch(null)
+                        showImagePickerDialog = false
+                    }
+                ) {
+                    Icon(Icons.Default.PhotoCamera, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("الكاميرا")
+                }
+            },
+            dismissButton = {
+                FilledTonalButton(
+                    onClick = {
+                        galleryLauncher.launch("image/*")
+                        showImagePickerDialog = false
+                    }
+                ) {
+                    Icon(Icons.Default.PhotoLibrary, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("الاستوديو")
+                }
+            }
+        )
     }
 }
 
