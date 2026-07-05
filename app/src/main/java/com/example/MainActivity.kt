@@ -5,8 +5,10 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -56,6 +58,87 @@ fun MainScreen(viewModel: AssetViewModel = viewModel()) {
     val coroutineScope = rememberCoroutineScope()
     val storageService = remember { LocalImageStorageService(context) }
     var currentScreen by remember { mutableStateOf("main") }
+
+    var showStatusDialog by remember { mutableStateOf(false) }
+    var statusMessage by remember { mutableStateOf("") }
+
+    val csvImportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri ->
+        uri?.let {
+            coroutineScope.launch {
+                try {
+                    val inputStream = context.contentResolver.openInputStream(uri)
+                    val bytes = inputStream?.readBytes() ?: ByteArray(0)
+                    if (bytes.isNotEmpty()) {
+                        var startIndex = 0
+                        // Check for UTF-8 BOM (EF BB BF)
+                        if (bytes.size >= 3 && bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte()) {
+                            startIndex = 3
+                        }
+                        
+                        var text = String(bytes, startIndex, bytes.size - startIndex, java.nio.charset.StandardCharsets.UTF_8)
+                        
+                        // Check for UTF-8 decoding issue, fallback to Windows-1256
+                        if (text.contains("\uFFFD")) {
+                            try {
+                                text = String(bytes, startIndex, bytes.size - startIndex, java.nio.charset.Charset.forName("Windows-1256"))
+                            } catch (e: Exception) {
+                                // Fallback
+                            }
+                        }
+
+                        if (text.isNotBlank()) {
+                            viewModel.importAssetsFromCsv(text) { count, message ->
+                                statusMessage = message
+                                showStatusDialog = true
+                            }
+                        } else {
+                            statusMessage = "الملف المختار فارغ!"
+                            showStatusDialog = true
+                        }
+                    } else {
+                        statusMessage = "الملف المختار فارغ!"
+                        showStatusDialog = true
+                    }
+                } catch (e: Exception) {
+                    statusMessage = "خطأ أثناء استيراد الملف: ${e.localizedMessage}"
+                    showStatusDialog = true
+                }
+            }
+        }
+    }
+
+    val csvExportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("text/csv")
+    ) { uri ->
+        uri?.let {
+            try {
+                val csvContent = viewModel.exportAssetsToCsv()
+                context.contentResolver.openOutputStream(uri)?.use { outputStream ->
+                    outputStream.write(csvContent.toByteArray())
+                }
+                statusMessage = "تم تصدير ملف الأصول والبيانات بنجاح!"
+                showStatusDialog = true
+            } catch (e: Exception) {
+                statusMessage = "خطأ أثناء تصدير الملف: ${e.localizedMessage}"
+                showStatusDialog = true
+            }
+        }
+    }
+
+    if (showStatusDialog) {
+        AlertDialog(
+            onDismissRequest = { showStatusDialog = false },
+            title = { Text("مزامنة وإدارة البيانات", fontWeight = FontWeight.Bold) },
+            text = { Text(statusMessage) },
+            confirmButton = {
+                Button(onClick = { showStatusDialog = false }) {
+                    Text("موافق")
+                }
+            }
+        )
+    }
 
     // Intercept Back Press to show confirmation dialog
     BackHandler(enabled = true) {
@@ -197,8 +280,32 @@ fun MainScreen(viewModel: AssetViewModel = viewModel()) {
                     ),
                     navigationIcon = {
                         if (selectedTab == 0) {
-                            IconButton(onClick = { Toast.makeText(context, "القائمة الرئيسية", Toast.LENGTH_SHORT).show() }) {
-                                Icon(Icons.Default.Menu, contentDescription = "القائمة")
+                            var showMenu by remember { mutableStateOf(false) }
+                            Box {
+                                IconButton(onClick = { showMenu = true }) {
+                                    Icon(Icons.Default.Menu, contentDescription = "القائمة")
+                                }
+                                DropdownMenu(
+                                    expanded = showMenu,
+                                    onDismissRequest = { showMenu = false }
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text("استيراد قاعدة البيانات من أكسل (Excel/CSV)") },
+                                        onClick = {
+                                            showMenu = false
+                                            csvImportLauncher.launch("text/*")
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.UploadFile, contentDescription = null) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("تصدير قاعدة البيانات (Excel/CSV)") },
+                                        onClick = {
+                                            showMenu = false
+                                            csvExportLauncher.launch("Assets_Export_${System.currentTimeMillis()}.csv")
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.DownloadForOffline, contentDescription = null) }
+                                    )
+                                }
                             }
                         }
                     },

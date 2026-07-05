@@ -252,7 +252,30 @@ class AssetViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // Excel-compatible CSV Importer
+    // Helper to parse CSV fields respecting quotes and custom delimiters
+    private fun parseCsvLine(line: String, delimiter: String): List<String> {
+        val result = mutableListOf<String>()
+        var inQuotes = false
+        val currentField = StringBuilder()
+        var i = 0
+        while (i < line.length) {
+            val c = line[i]
+            if (c == '"') {
+                inQuotes = !inQuotes
+            } else if (line.startsWith(delimiter, i) && !inQuotes) {
+                result.add(currentField.toString().trim().removeSurrounding("\""))
+                currentField.clear()
+                i += delimiter.length - 1
+            } else {
+                currentField.append(c)
+            }
+            i++
+        }
+        result.add(currentField.toString().trim().removeSurrounding("\""))
+        return result
+    }
+
+    // Excel-compatible CSV Importer with robust English/Arabic header matching and auto delimiter detection
     fun importAssetsFromCsv(csvText: String, onComplete: (Int, String) -> Unit) {
         viewModelScope.launch {
             try {
@@ -262,8 +285,19 @@ class AssetViewModel(application: Application) : AndroidViewModel(application) {
                     return@launch
                 }
                 
+                // Detect delimiter dynamically from the header line
+                val firstLine = lines.firstOrNull { it.isNotBlank() } ?: ""
+                val commaCount = firstLine.count { it == ',' }
+                val semicolonCount = firstLine.count { it == ';' }
+                val tabCount = firstLine.count { it == '\t' }
+                val delimiter = when {
+                    semicolonCount > commaCount && semicolonCount > tabCount -> ";"
+                    tabCount > commaCount && tabCount > semicolonCount -> "\t"
+                    else -> ","
+                }
+
                 // Get header and columns
-                val header = lines.first().split(",").map { it.trim().removeSurrounding("\"") }
+                val header = parseCsvLine(firstLine, delimiter).map { it.trim().lowercase() }
                 
                 var importedCount = 0
                 val departmentsList = repository.allDepartments.first()
@@ -274,43 +308,52 @@ class AssetViewModel(application: Application) : AndroidViewModel(application) {
                 val departmentsMap = departmentsList.associate { 
                     it.name.trim().lowercase() to it.id 
                 }.toMutableMap()
+
+                // Prosperous headers lists for Arabic and English
+                val nameNames = listOf("الاسم", "اسم الجهاز", "اسم الاصل", "اسم الأصل", "البيان", "الأصل", "الاصل", "name", "device name", "asset name", "device", "asset", "item", "title")
+                val idNames = listOf("كود تعريفي", "رقم الأصل", "الرقم التعريفي", "كود الأصل", "كود الاصل", "الباركود", "المعرف", "رقم الاصل", "الكود", "id", "asset id", "code", "asset code", "device id", "barcode", "serial", "inventory id")
+                val serialNames = listOf("الرقم التسلسلي", "رقم التسلسل", "الرقم السري", "سريال", "رقم السريال", "serialnumber", "serial number", "s/n", "sn", "serial no", "serial no.")
+                val typeNames = listOf("النوع", "التصنيف", "الفئة", "type", "category", "class")
+                val descriptionNames = listOf("الوصف", "ملاحظات", "تفاصيل", "description", "notes", "details", "desc", "comment", "comments")
+                val conditionNames = listOf("الجودة", "الحالة", "حالة الأصل", "حالة الاصل", "حالة", "condition", "status", "state")
+                val modelNames = listOf("الموديل", "طراز", "رقم الموديل", "النوعية", "model", "type no", "model number")
+                val quantityNames = listOf("الكمية", "العدد", "الكميه", "quantity", "qty", "count")
+                val accessoriesNames = listOf("الملحقات", "التوابع", "المرفقات", "الملحقه", "accessories", "attachments")
+                val manufacturerNames = listOf("الشركة المصنعة", "الشركة", "المصنع", "البراند", "الماركة", "ماركة", "manufacturer", "brand", "make", "company")
+                val deptNames = listOf("القسم", "الإدارة", "الادارة", "الجهة", "الموقع", "department", "dept", "section", "room", "location")
                 
                 for (i in 1 until lines.size) {
                     val line = lines[i].trim()
                     if (line.isBlank()) continue
                     
-                    // CSV column values
-                    val tokens = line.split(",").map { it.trim().removeSurrounding("\"") }
+                    // Parse values using our robust quote-respecting CSV line parser
+                    val tokens = parseCsvLine(line, delimiter)
                     if (tokens.isEmpty()) continue
                     
-                    // Map indices dynamically based on header
-                    fun getValueForHeader(vararg names: String): String {
+                    // Map indices dynamically based on header list
+                    fun getValueForHeader(names: List<String>): String {
                         val index = header.indexOfFirst { headerName -> 
-                            names.any { it.equals(headerName, ignoreCase = true) }
+                            names.any { prospective -> prospective.lowercase().trim() == headerName }
                         }
                         return if (index != -1 && index < tokens.size) tokens[index] else ""
                     }
                     
-                    val nameValue = getValueForHeader("الاسم", "name", "Device Name")
+                    val nameValue = getValueForHeader(nameNames)
                     if (nameValue.isBlank()) continue
                     
-                    val serial = getValueForHeader("الرقم التسلسلي", "serialNumber", "Serial Number")
-                    val type = getValueForHeader("النوع", "type", "Type")
-                    val description = getValueForHeader("الوصف", "description", "Notes")
-                    val condition = getValueForHeader("الجودة", "condition", "Condition")
-                    val model = getValueForHeader("الموديل", "model", "Model")
-                    val quantity = getValueForHeader("الكمية", "quantity", "Quantity").toIntOrNull() ?: 1
-                    val assetCode = getValueForHeader("كود تعريفي", "assetCode", "Asset ID").ifBlank { getValueForHeader("Asset ID", "id") }
+                    val serial = getValueForHeader(serialNames)
+                    val type = getValueForHeader(typeNames).ifBlank { "BIOMEDICAL" }
+                    val description = getValueForHeader(descriptionNames)
+                    val condition = getValueForHeader(conditionNames).ifBlank { "GOOD" }
+                    val model = getValueForHeader(modelNames)
+                    val quantity = getValueForHeader(quantityNames).toIntOrNull() ?: 1
+                    val assetCode = getValueForHeader(idNames)
                     val idValue = assetCode.ifBlank { System.currentTimeMillis().toString() + "-" + importedCount }
-                    val accessories = getValueForHeader("الملحقات", "accessories", "Accessories")
-                    val manufacturerIdOrName = getValueForHeader("الشركة المصنعة", "manufacturer", "Manufacturer")
-                    val companyName = getValueForHeader("الشركة", "company", "Company")
+                    val accessories = getValueForHeader(accessoriesNames)
+                    val manufacturer = getValueForHeader(manufacturerNames)
                     
-                    // Use company name if available, otherwise fallback to manufacturer
-                    val manufacturer = if (companyName.isNotBlank()) companyName else manufacturerIdOrName
-                    
-                    // Check if department exists by name, otherwise use default
-                    val deptName = getValueForHeader("القسم", "department", "Department").trim()
+                    // Check if department exists by name, otherwise use default or create
+                    val deptName = getValueForHeader(deptNames).trim()
                     var deptId = defaultDeptId
                     if (deptName.isNotBlank()) {
                         val deptKey = deptName.lowercase()
