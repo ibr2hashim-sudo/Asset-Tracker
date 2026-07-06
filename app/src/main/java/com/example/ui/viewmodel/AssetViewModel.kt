@@ -335,7 +335,7 @@ class AssetViewModel(application: Application) : AndroidViewModel(application) {
                 val idNames = listOf("كود تعريفي", "رقم الأصل", "الرقم التعريفي", "كود الأصل", "كود الاصل", "الباركود", "المعرف", "رقم الاصل", "الكود", "id", "asset id", "code", "asset code", "device id", "barcode", "serial", "inventory id")
                 val serialNames = listOf("الرقم التسلسلي", "رقم التسلسل", "الرقم السري", "سريال", "رقم السريال", "serialnumber", "serial number", "s/n", "sn", "serial no", "serial no.", "الرقم التسلسلي", "serial_number")
                 val typeNames = listOf("النوع", "التصنيف", "الفئة", "type", "category", "class")
-                val descriptionNames = listOf("الوصف", "ملاحظات", "تفاصيل", "description", "notes", "details", "desc", "comment", "comments")
+                val descriptionNames = listOf("الوصف", "ملاحظات", "ملاحظة", "ملاحضة", "تفاصيل", "description", "notes", "note", "details", "desc", "comment", "comments")
                 val conditionNames = listOf("الجودة", "الحالة", "حالة الأصل", "حالة الاصل", "حالة", "condition", "status", "state")
                 val modelNames = listOf("الموديل", "طراز", "رقم الموديل", "النوعية", "model", "type no", "model number", "موديل", "device model")
                 val quantityNames = listOf("الكمية", "العدد", "الكميه", "quantity", "qty", "count")
