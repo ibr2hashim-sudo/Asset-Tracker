@@ -11,7 +11,7 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface AssetDao {
-    @Query("SELECT * FROM assets ORDER BY id DESC")
+    @Query("SELECT * FROM assets ORDER BY name ASC")
     fun getAllAssets(): Flow<List<Asset>>
 
     @Query("SELECT * FROM assets WHERE id = :id LIMIT 1")
