@@ -1,6 +1,7 @@
 package com.example
 
 import android.app.Activity
+import android.content.Context
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -34,10 +35,18 @@ import com.example.data.local.LocalImageStorageService
 import kotlinx.coroutines.launch
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.viewmodel.AssetViewModel
+import java.util.concurrent.TimeUnit
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        
+        // التحقق من فترة التجربة (30 يوماً)
+        if (isTrialExpired()) {
+            finishAffinity()
+            return
+        }
+
         enableEdgeToEdge()
         setContent {
             MyApplicationTheme {
@@ -46,6 +55,24 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    private fun isTrialExpired(): Boolean {
+        val prefs = getSharedPreferences("TrialPrefs", Context.MODE_PRIVATE)
+        val trialDurationDays = 30L 
+        
+        var firstLaunch = prefs.getLong("first_launch_time", 0L)
+
+        if (firstLaunch == 0L) {
+            firstLaunch = System.currentTimeMillis()
+            prefs.edit().putLong("first_launch_time", firstLaunch).apply()
+            return false
+        }
+
+        val elapsedMillis = System.currentTimeMillis() - firstLaunch
+        val elapsedDays = TimeUnit.MILLISECONDS.toDays(elapsedMillis)
+        
+        return elapsedDays >= trialDurationDays
     }
 }
 
@@ -72,19 +99,16 @@ fun MainScreen(viewModel: AssetViewModel = viewModel()) {
                     val bytes = inputStream?.readBytes() ?: ByteArray(0)
                     if (bytes.isNotEmpty()) {
                         var startIndex = 0
-                        // Check for UTF-8 BOM (EF BB BF)
                         if (bytes.size >= 3 && bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte()) {
                             startIndex = 3
                         }
                         
                         var text = String(bytes, startIndex, bytes.size - startIndex, java.nio.charset.StandardCharsets.UTF_8)
                         
-                        // Check for UTF-8 decoding issue, fallback to Windows-1256
                         if (text.contains("\uFFFD")) {
                             try {
                                 text = String(bytes, startIndex, bytes.size - startIndex, java.nio.charset.Charset.forName("Windows-1256"))
                             } catch (e: Exception) {
-                                // Fallback
                             }
                         }
 
@@ -140,7 +164,6 @@ fun MainScreen(viewModel: AssetViewModel = viewModel()) {
         )
     }
 
-    // Intercept Back Press to show confirmation dialog
     BackHandler(enabled = true) {
         if (currentScreen == "add_device") {
             currentScreen = "main"
@@ -190,7 +213,6 @@ fun MainScreen(viewModel: AssetViewModel = viewModel()) {
         )
     }
 
-    // Collect States from the ViewModel reactively
     val departments by viewModel.departments.collectAsState(initial = emptyList())
     val assetsWithDetails by viewModel.assetsWithDetails.collectAsState(initial = emptyList())
     val filteredAssets by viewModel.filteredAssets.collectAsState(initial = emptyList())
@@ -213,7 +235,6 @@ fun MainScreen(viewModel: AssetViewModel = viewModel()) {
                         localImagePath = storageService.saveImageLocally(galleryUri, assetId)
                     }
                     
-                    // إضافة أصل جديد مع الصورة والبيانات
                     viewModel.addAsset(
                         name = deviceName,
                         serialNumber = serial.ifBlank { "SN-${System.currentTimeMillis() % 10000}" },
@@ -229,7 +250,7 @@ fun MainScreen(viewModel: AssetViewModel = viewModel()) {
                     )
                     
                     currentScreen = "main"
-                    selectedTab = 0 // العودة للوحة التحكم
+                    selectedTab = 0 
                 }
             }
         )
@@ -311,7 +332,6 @@ fun MainScreen(viewModel: AssetViewModel = viewModel()) {
                     },
                     actions = {
                         if (selectedTab == 0) {
-                            // أزرار الواجهة الرئيسية كما في الصورة المرفقة (تحديث، تحديد، بحث)
                             IconButton(onClick = { 
                                 Toast.makeText(context, "تم تحديث البيانات بنجاح", Toast.LENGTH_SHORT).show() 
                             }) {
